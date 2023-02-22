@@ -18,7 +18,12 @@ defmodule Ueberauth.Strategy.Passwordless do
 
       config :ueberauth, Ueberauth.Strategy.Passwordless,
         token_secret: System.get_env("PASSWORDLESS_TOKEN_SECRET"),
+        # default mailer
         mailer: MyApp.MyMailerModule,
+        # (Optional) Specify additional mailers
+        mailers: [
+          my_other_mailer: MyApp.MyOtherMailerModule
+        ]
         # (Optional) Specify how long a login token should be valid (here 30 minutes)
         ttl: 30 * 60,
         # (Optional) Specify a default path or url to which Passwordless should redirect
@@ -94,12 +99,19 @@ defmodule Ueberauth.Strategy.Passwordless do
   @doc """
     Handles the request phase of the authentication flow.
   """
-  def handle_request!(%Plug.Conn{params: %{"email" => email}} = conn) do
-    conn = put_private(conn, :passwordless_email, email)
+  def handle_request!(%Plug.Conn{params: %{"email" => email} = params} = conn) do
+    conn =
+      conn
+      |> put_private(:passwordless_email, email)
+
+    mailer =
+      Map.get(params, "mailer", "default")
+      |> String.to_existing_atom()
+      |> then(&config(:mailers)[&1])
 
     conn
     |> create_link(email)
-    |> send_email(email)
+    |> send_email(email, mailer)
 
     redirect_to_url!(conn)
   end
@@ -167,10 +179,11 @@ defmodule Ueberauth.Strategy.Passwordless do
   def create_link(conn, email, opts \\ []) do
     {:ok, token} = create_token(email, opts)
 
-    params = [
-      token: token
-    ]
-    |> Ueberauth.Strategy.Helpers.with_state_param(conn)
+    params =
+      [
+        token: token
+      ]
+      |> Ueberauth.Strategy.Helpers.with_state_param(conn)
 
     if config(:use_store), do: Store.add(token)
     callback_url(conn, params)
@@ -180,7 +193,7 @@ defmodule Ueberauth.Strategy.Passwordless do
     ExCrypto.Token.create(email, config(:token_secret), opts)
   end
 
-  defp send_email(link, email), do: config(:mailer).send_email(link, email)
+  defp send_email(link, email, mailer), do: mailer.send_email(link, email)
 
   defp redirect_to_url!(conn) do
     redirect_url = conn.params["redirect_url"] || config(:redirect_url)
@@ -220,6 +233,12 @@ defmodule Ueberauth.Strategy.Passwordless do
 
     if Keyword.get(config, :mailer) |> is_nil(),
       do: raise(KeyError, message: "You must set a :mailer Module in your config.")
+
+    mailers =
+      Keyword.get(config, :mailers, [])
+      |> Keyword.put(:default, config[:mailer])
+
+    config = Keyword.put(config, :mailers, mailers)
 
     @defaults |> Keyword.merge(config)
   end
