@@ -11,7 +11,7 @@ defmodule Ueberauth.Strategy.Passwordless.Application do
 
   defp maybe_start_store(true, opts) do
     children = [
-      {Ueberauth.Strategy.Passwordless.Store, opts}
+      {Passwordless.Store.store_module(), opts}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one)

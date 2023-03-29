@@ -75,7 +75,7 @@ defmodule UeberauthPasswordlessTest do
 
       link =
         conn("get", "/")
-        |> Passwordless.create_link("foo@bar.com", date_time: timestamp_one_day_ago)
+        |> Passwordless.create_link("foo@bar.com", %{}, date_time: timestamp_one_day_ago)
 
       conn =
         conn("get", link)

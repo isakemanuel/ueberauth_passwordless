@@ -92,8 +92,9 @@ defmodule Ueberauth.Strategy.Passwordless do
     use_store: true,
     # Garbage collect the token :ets store every Minute
     garbage_collection_interval: 1000 * 60,
-    store_process_name: Ueberauth.Strategy.Passwordless.Store,
-    store_table_name: :passwordless_token_store
+    store_process_name: Ueberauth.Strategy.Passwordless.Store.Ets,
+    store_table_name: :passwordless_token_store,
+    store_module: Ueberauth.Strategy.Passwordless.Store.Ets
   ]
 
   @doc """
@@ -110,7 +111,7 @@ defmodule Ueberauth.Strategy.Passwordless do
       |> then(&config(:mailers)[&1])
 
     conn
-    |> create_link(email)
+    |> create_link(email, params)
     |> send_email(email, mailer)
 
     redirect_to_url!(conn)
@@ -125,9 +126,11 @@ defmodule Ueberauth.Strategy.Passwordless do
     Handles the callback phase of the authentication flow.
   """
   def handle_callback!(%Plug.Conn{params: %{"token" => token}} = conn) do
-    with {:ok, token} <- invalidate_token(token),
+    with {:ok, {token, payload}} <- invalidate_token(token),
          {:ok, email} <- extract_email(token) do
-      put_private(conn, :passwordless_email, email)
+      conn
+      |> put_private(:passwordless_email, email)
+      |> put_private(:passwordless_payload, payload)
     else
       _error -> set_errors!(conn, [error("invalid_token", "Token was invalid")])
     end
@@ -142,6 +145,7 @@ defmodule Ueberauth.Strategy.Passwordless do
   def handle_cleanup!(conn) do
     conn
     |> put_private(:passwordless_email, nil)
+    |> put_private(:passwordless_payload, nil)
   end
 
   @doc """
@@ -166,7 +170,8 @@ defmodule Ueberauth.Strategy.Passwordless do
     %Extra{
       raw_info: %{
         token: conn.params["token"],
-        email: conn.private.passwordless_email
+        email: conn.private.passwordless_email,
+        payload: conn.private.passwordless_payload
       }
     }
   end
@@ -176,7 +181,7 @@ defmodule Ueberauth.Strategy.Passwordless do
 
   The token contains a unforgeable HMAC token that expire after a TTL (Time-to-live).
   """
-  def create_link(conn, email, opts \\ []) do
+  def create_link(conn, email, req_params \\ %{}, opts \\ []) do
     {:ok, token} = create_token(email, opts)
 
     params =
@@ -185,7 +190,7 @@ defmodule Ueberauth.Strategy.Passwordless do
       ]
       |> Ueberauth.Strategy.Helpers.with_state_param(conn)
 
-    if config(:use_store), do: Store.add(token)
+    if config(:use_store), do: Store.add(token, params: req_params)
     callback_url(conn, params)
   end
 
@@ -210,16 +215,17 @@ defmodule Ueberauth.Strategy.Passwordless do
     do: ExCrypto.Token.verify(token, config(:token_secret), config(:ttl))
 
   defp invalidate_token(token) do
-    cond do
-      not config(:use_store) ->
-        {:ok, token}
+    if not config(:use_store) do
+      {:ok, {token, nil}}
+    else
+      case Store.exists?(token) do
+        {true, payload} ->
+          Store.remove(token)
+          {:ok, {token, payload}}
 
-      Store.exists?(token) ->
-        Store.remove(token)
-        {:ok, token}
-
-      true ->
-        {:error, :token_already_used}
+        false ->
+          {:error, :token_already_used}
+      end
     end
   end
 

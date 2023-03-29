@@ -60,20 +60,20 @@ defmodule UeberauthPasswordless.StoreTest do
 
   describe "collect_garbage" do
     test "removes outdated token" do
-      Store.add("8", ~U[2020-01-01 00:00:00Z])
+      Store.add("8", timestamp: ~U[2020-01-01 00:00:00Z])
       assert Store.exists?("8")
 
-      send(Store, :collect_garbage)
+      send(Store.store_module(), :collect_garbage)
       :timer.sleep(100)
 
       refute Store.exists?("8")
     end
 
     test "does not affect still active token" do
-      Store.add("8", DateTime.utc_now())
+      Store.add("8", timestamp: DateTime.utc_now())
       assert Store.exists?("8")
 
-      send(Store, :collect_garbage)
+      send(Store.store_module(), :collect_garbage)
       :timer.sleep(100)
 
       assert Store.exists?("8")
